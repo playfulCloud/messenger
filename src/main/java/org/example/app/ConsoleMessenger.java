@@ -2,15 +2,22 @@ package org.example.app;
 
 import org.example.api.ApiService;
 import org.example.dto.Dto;
+import org.example.jwt.JwtDecoder;
+import org.example.rsa.RSACipher;
 
 import java.io.IOException;
+import java.math.BigInteger;
+import java.util.Arrays;
 import java.util.Scanner;
+import java.util.stream.Collectors;
 
 
 public class ConsoleMessenger {
 
     private static final Scanner scanner = new Scanner(System.in);
     private static ApiService apiService = new ApiService();
+
+    private final static RSACipher rsaCipher = new RSACipher();
     private static String authToken;
 
     public static void main(String[] args) {
@@ -21,9 +28,10 @@ public class ConsoleMessenger {
             System.out.println("\n1. Login");
             System.out.println("2. Register");
             System.out.println("3. View Conversations");
-            System.out.println("4. Send Message");
-            System.out.println("5. Logout");
-            System.out.println("6. Exit");
+            System.out.println("4. View Conversation content by participant");
+            System.out.println("5. Send Message");
+            System.out.println("6. Logout");
+            System.out.println("y. Exit");
             System.out.print("Choose an option: ");
             int choice = scanner.nextInt();
             scanner.nextLine();
@@ -32,15 +40,33 @@ public class ConsoleMessenger {
                 case 1 -> login();
                 case 2 -> register();
                 case 3 -> viewConversations();
-                case 4 -> sendMessage();
-                case 5 -> logout();
-                case 6 -> running = false;
+                case 4 -> viewConversationsByParticipant();
+
+                case 5 -> sendMessage();
+                case 6 -> logout();
+                case 7 -> running = false;
                 default -> System.out.println("Invalid option, please try again.");
             }
         }
 
         System.out.println("Goodbye!");
         scanner.close();
+    }
+
+    private static void viewConversationsByParticipant() {
+        System.out.print("Participant: ");
+        String participant = scanner.nextLine();
+
+        try {
+            Dto.MessagesDto response = apiService.getConversationMessages(authToken,participant);
+            String result = Arrays.stream(response.messages()).map(
+                    messageDto -> messageDto.receiver() + " " + rsaCipher.decodeString(messageDto.content())
+            ).collect(Collectors.joining("\n"));
+
+            System.out.println(result);
+        } catch (IOException | InterruptedException e) {
+            System.out.println("Login failed: " + e.getMessage());
+        }
     }
 
     private static void login() {
@@ -54,6 +80,11 @@ public class ConsoleMessenger {
             Dto.LoginResponseDto response = apiService.login(loginRequest);
             authToken = response.token();
             System.out.println("Login successful! Token: " + authToken);
+            var decodedToken = JwtDecoder.decodePayload(authToken);
+            Integer n = (Integer) decodedToken.get("n");
+            Integer e = (Integer) decodedToken.get("e");
+            rsaCipher.setServerPublicKey(BigInteger.valueOf((e.longValue())), BigInteger.valueOf(n.longValue()));
+            rsaCipher.generateClientKeys();
         } catch (IOException | InterruptedException e) {
             System.out.println("Login failed: " + e.getMessage());
         }
@@ -102,9 +133,10 @@ public class ConsoleMessenger {
         String receiver = scanner.nextLine();
         System.out.print("Message Content: ");
         String content = scanner.nextLine();
+        String encodedContent = rsaCipher.encodeString(content);
 
         try {
-            Dto.SendMessageDto message = new Dto.SendMessageDto(content, receiver);
+            Dto.SendMessageDto message = new Dto.SendMessageDto(encodedContent, receiver);
             apiService.sendMessage(authToken, message);
             System.out.println("Message sent successfully!");
         } catch (IOException | InterruptedException e) {
